@@ -1,0 +1,6 @@
+node_modules
+.vscode
+dist
+src/*.d.ts
+*.js.map
+*.LICENSE.txt
