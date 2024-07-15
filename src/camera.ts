@@ -64,7 +64,6 @@ class CameraBase {
     }
 }
 
-// ArcballCamera implements a basic orbiting camera around the world origin
 export class OrbitCamera extends CameraBase implements Camera {
     // The input handler
     private inputHandler: InputHandler;
@@ -92,16 +91,14 @@ export class OrbitCamera extends CameraBase implements Camera {
     rotationSpeed = 1;
 
     // Speed multiplier for camera zoom
-    zoomSpeed = 0.1;
+    zoomSpeed = 0.05;
 
     // Rotation velocity drag coeffient [0 .. 1]
     // 0: Spins forever
     // 1: Instantly stops spinning
     frictionCoefficient = 0.5;
 
-    // Construtor
     constructor(options?: {
-        // The initial position of the camera
         position?: Vec3;
         inputHandler?: InputHandler;
     }) {

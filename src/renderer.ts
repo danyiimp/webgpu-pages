@@ -2,34 +2,10 @@ import { mat4, vec3 } from "wgpu-matrix";
 
 // import vertShaderCode from './shaders/triangle.vert.wgsl';
 // import fragShaderCode from './shaders/triangle.frag.wgsl';
-import vertShaderCode from './shaders/basic.vert.wgsl';
+import vertShaderCode from './shaders/camera.vert.wgsl';
 import fragShaderCode from './shaders/basic.frag.wgsl';
 import Camera from "./camera";
-
-// 📈 Position Vertex Buffer Data
-const positions = new Float32Array([
-    Math.sqrt(8 / 9), 0, -1 / 3, // Вершина 1
-    -Math.sqrt(2 / 9), Math.sqrt(2 / 3), -1 / 3, // Вершина 2
-    -Math.sqrt(2 / 9), -Math.sqrt(2 / 3), -1 / 3, // Вершина 3
-    0, 0, 1 // Вершина 4 (вершина, противоположная основанию)
-]);
-// 🎨 Color Vertex Buffer Data
-const colors = new Float32Array([
-    1.0, 0.0, 0.0, // 🔴
-    0.0, 1.0, 0.0, // 🟢
-    0.0, 0.0, 1.0, // 🔵
-    0.0, 0.0, 0.0
-]);
-
-// let uniform = getInitialMatrix();
-
-// 📇 Index Buffer Data
-const indices = new Uint16Array([
-    0, 1, 2, 
-    0, 2, 3,
-    0, 3, 1,
-    1, 3, 2
-]);
+import { RenderObject, RenderObjectBase } from "./renderable";
 
 let lastFrameMS = Date.now();
 
@@ -49,23 +25,19 @@ export default class Renderer {
     depthTexture: GPUTexture;
     depthTextureView: GPUTextureView;
 
-    // 🔺 Resources
-    positionBuffer: GPUBuffer;
-    colorBuffer: GPUBuffer;
-    indexBuffer: GPUBuffer;
+    renderObjects: RenderObject[];
     uniformBuffer: GPUBuffer;
+
     vertModule: GPUShaderModule;
     fragModule: GPUShaderModule;
-    pipeline: GPURenderPipeline;
-
-    uniformBindGroup: GPUBindGroup;
 
     commandEncoder: GPUCommandEncoder;
     passEncoder: GPURenderPassEncoder;
 
-    constructor(canvas: HTMLCanvasElement, camera: Camera) {
+    constructor(canvas: HTMLCanvasElement, camera: Camera, renderObjects: RenderObject[]) {
         this.canvas = canvas;
         this.camera = camera;
+        this.renderObjects = renderObjects;
     }
 
     // 🏎️ Start the rendering engine
@@ -113,36 +85,7 @@ export default class Renderer {
         return true;
     }
 
-    // 🍱 Initialize resources to render triangle (buffers, shaders, pipeline)
     async initializeResources() {
-        // 🔺 Buffers
-        const createBuffer = (
-            arr: Float32Array | Uint16Array,
-            usage: number
-        ) => {
-            // 📏 Align to 4 bytes (thanks @chrimsonite)
-            let desc = {
-                size: (arr.byteLength + 3) & ~3,
-                usage,
-                mappedAtCreation: true
-            };
-            let buffer = this.device.createBuffer(desc);
-            const writeArray =
-                arr instanceof Uint16Array
-                    ? new Uint16Array(buffer.getMappedRange())
-                    : new Float32Array(buffer.getMappedRange());
-            writeArray.set(arr);
-            buffer.unmap();
-            return buffer;
-        };
-
-        this.positionBuffer = createBuffer(positions, GPUBufferUsage.VERTEX);
-        this.colorBuffer = createBuffer(colors, GPUBufferUsage.VERTEX);
-        this.indexBuffer = createBuffer(indices, GPUBufferUsage.INDEX);
-        this.uniformBuffer = createBuffer(getInitialMatrix(), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-        
-
-        // 🖍️ Shaders
         const vsmDesc = {
             code: vertShaderCode
         };
@@ -153,94 +96,19 @@ export default class Renderer {
         };
         this.fragModule = this.device.createShaderModule(fsmDesc);
 
-        // ⚗️ Graphics Pipeline
+        
+        const uniformBufferSize = 4 * 16; // 4x4 matrix
+        this.uniformBuffer = this.device.createBuffer({
+            size: uniformBufferSize,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        
+        RenderObjectBase.initializeStatic(this.device, this.vertModule, this.fragModule, this.uniformBuffer);
 
-        // 🔣 Input Assembly
-        const positionAttribDesc: GPUVertexAttribute = {
-            shaderLocation: 0, // [[location(0)]]
-            offset: 0,
-            format: 'float32x3'
-        };
-        const colorAttribDesc: GPUVertexAttribute = {
-            shaderLocation: 1, // [[location(1)]]
-            offset: 0,
-            format: 'float32x3'
-        };
-        const positionBufferDesc: GPUVertexBufferLayout = {
-            attributes: [positionAttribDesc],
-            arrayStride: 4 * 3, // sizeof(float) * 3
-            stepMode: 'vertex'
-        };
-        const colorBufferDesc: GPUVertexBufferLayout = {
-            attributes: [colorAttribDesc],
-            arrayStride: 4 * 3, // sizeof(float) * 3
-            stepMode: 'vertex'
-        };
 
-        // 🌑 Depth
-        const depthStencil: GPUDepthStencilState = {
-            depthWriteEnabled: true,
-            depthCompare: 'less',
-            format: 'depth24plus-stencil8'
-        };
-
-        // 🦄 Uniform Data
-        const uniformBindGroupLayout: GPUBindGroupLayout = this.device.createBindGroupLayout({
-            entries: [{
-                binding: 0,
-                visibility: GPUShaderStage.VERTEX,
-                buffer: {},
-            }]
-        })
-        this.uniformBindGroup = this.device.createBindGroup({
-            layout: uniformBindGroupLayout,
-            entries: [{
-                binding: 0,
-                resource: {
-                    buffer: this.uniformBuffer
-                }
-            }]
-        })
-        // const bindGroupLayouts = this.pipeline.getBindGroupLayout(0);
-
-        const pipelineLayoutDesc = { bindGroupLayouts: [uniformBindGroupLayout] };
-        const layout = this.device.createPipelineLayout(pipelineLayoutDesc);
-
-        // 🎭 Shader Stages
-        const vertex: GPUVertexState = {
-            module: this.vertModule,
-            entryPoint: 'main',
-            buffers: [positionBufferDesc, colorBufferDesc]
-        };
-
-        // 🌀 Color/Blend State
-        const colorState: GPUColorTargetState = {
-            format: 'bgra8unorm'
-        };
-
-        const fragment: GPUFragmentState = {
-            module: this.fragModule,
-            entryPoint: 'main',
-            targets: [colorState]
-        };
-
-        // 🟨 Rasterization
-        const primitive: GPUPrimitiveState = {
-            frontFace: 'cw',
-            cullMode: 'none',
-            topology: 'triangle-list'
-        };
-
-        const pipelineDesc: GPURenderPipelineDescriptor = {
-            layout,
-
-            vertex,
-            fragment,
-
-            primitive,
-            depthStencil
-        };
-        this.pipeline = this.device.createRenderPipeline(pipelineDesc);
+        this.renderObjects.forEach(object => {
+            object.initialize(this.device);
+        });
     }
 
     // ↙️ Resize swapchain, frame buffer attachments
@@ -296,9 +164,7 @@ export default class Renderer {
 
         this.commandEncoder = this.device.createCommandEncoder();
 
-        // 🖌️ Encode drawing commands
         this.passEncoder = this.commandEncoder.beginRenderPass(renderPassDesc);
-        this.passEncoder.setPipeline(this.pipeline);
         this.passEncoder.setViewport(
             0,
             0,
@@ -313,13 +179,12 @@ export default class Renderer {
             this.canvas.width,
             this.canvas.height
         );
-        this.passEncoder.setVertexBuffer(0, this.positionBuffer);
-        this.passEncoder.setVertexBuffer(1, this.colorBuffer);
-        this.passEncoder.setIndexBuffer(this.indexBuffer, 'uint16');
-        this.passEncoder.setBindGroup(0, this.uniformBindGroup);
-        this.passEncoder.drawIndexed(indices.length, 1);
-        this.passEncoder.end();
+                  
+        this.renderObjects.forEach(object => {
+            object.render(this.passEncoder);
+        });
 
+        this.passEncoder.end();
         this.queue.submit([this.commandEncoder.finish()]);
     }
 
